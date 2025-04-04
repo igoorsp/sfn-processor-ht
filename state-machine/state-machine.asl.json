@@ -1,0 +1,48 @@
+{
+    "Comment": "A description of my state machine",
+    "StartAt": "Pass",
+    "States": {
+        "Pass": {
+            "Type": "Pass",
+            "Next": "SQS SendMessage"
+        },
+        "SQS SendMessage": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+            "Arguments": {
+                "MessageBody": "{% $states.input %}"
+            },
+            "TimeoutSeconds": 120,
+            "Next": "Choice",
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.TaskFailed",
+                        "States.Timeout"
+                    ],
+                    "Next": "Fail"
+                }
+            ]
+        },
+        "Fail": {
+            "Type": "Fail"
+        },
+        "Choice": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Next": "Success",
+                    "Condition": "{% status == APPROVED %}"
+                },
+                {
+                    "Next": "Success",
+                    "Condition": "{% status == REJECTED%}"
+                }
+            ]
+        },
+        "Success": {
+            "Type": "Succeed"
+        }
+    },
+    "QueryLanguage": "JSONata"
+}
