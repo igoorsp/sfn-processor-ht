@@ -1,48 +1,73 @@
 {
     "Comment": "A description of my state machine",
-    "StartAt": "Pass",
+    "StartAt": "InitFlow",
     "States": {
-        "Pass": {
+        "InitFlow": {
             "Type": "Pass",
-            "Next": "SQS SendMessage"
+            "Next": "EnviarMsgAprovacao"
         },
-        "SQS SendMessage": {
+        "EnviarMsgAprovacao": {
             "Type": "Task",
             "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
-            "Arguments": {
-                "MessageBody": "{% $states.input %}"
+            "Parameters": {
+                "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/state-machine-queue",
+                "MessageBody": {
+                    "executionId.$": "$$.Execution.Id",
+                    "taskToken.$": "$$.Task.Token",
+                    "executionStartTime.$": "$$.Execution.StartTime",
+                    "businessKey.$": "$.businessKey"
+                }
             },
+            "Next": "ValidarResult",
             "TimeoutSeconds": 120,
-            "Next": "Choice",
             "Catch": [
                 {
                     "ErrorEquals": [
-                        "States.TaskFailed",
                         "States.Timeout"
                     ],
-                    "Next": "Fail"
+                    "Comment": "Timeout",
+                    "Next": "Timeout"
+                },
+                {
+                    "ErrorEquals": [
+                        "ValidationError"
+                    ],
+                    "Comment": "CustomException",
+                    "Next": "CustomException"
                 }
             ]
         },
-        "Fail": {
+        "CustomException": {
             "Type": "Fail"
         },
-        "Choice": {
+        "Timeout": {
+            "Type": "Fail"
+        },
+        "ValidarResult": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Next": "Success",
-                    "Condition": "{% status == APPROVED %}"
+                    "Next": "SuccessState",
+                    "Variable": "$.result",
+                    "StringEquals": "APPROVED"
                 },
                 {
-                    "Next": "Success",
-                    "Condition": "{% status == REJECTED%}"
+                    "Next": "RejectedState",
+                    "Variable": "$.result",
+                    "StringEquals": "REJECTED"
                 }
             ]
+        },
+        "RejectedState": {
+            "Type": "Pass",
+            "Next": "Success"
+        },
+        "SuccessState": {
+            "Type": "Pass",
+            "Next": "Success"
         },
         "Success": {
             "Type": "Succeed"
         }
-    },
-    "QueryLanguage": "JSONata"
+    }
 }

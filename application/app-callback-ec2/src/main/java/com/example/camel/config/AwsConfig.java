@@ -21,10 +21,10 @@ public class AwsConfig {
     }
 
     @Bean
-    public SqsClient sqsClient() {
+    public SqsClient amazonSQSClient() {
         return SqsClient.builder()
                 .region(AWS_REGION)
-                .credentialsProvider(DefaultCredentialsProvider.create()) // Usa provider automático
+                .credentialsProvider(DefaultCredentialsProvider.create())
                 .build();
     }
 }
