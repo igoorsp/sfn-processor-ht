@@ -41,15 +41,13 @@ public class PostStepFunctionRouteBuilder extends RouteBuilder {
                         throw new IllegalArgumentException("executionId is missing or empty in the message body");
                     }
 
-                    // Se for APPROVED ou REJECTED, usamos SendTaskSuccess
                     if (APPROVED.equals(status)) {
-                        stepFunctionsService.sendTaskSuccess(taskToken, "{\"result\": \"APPROVED\"}");
+                        stepFunctionsService.sendTaskSuccess(taskToken, "{\"retryApproval\": true}");
                         log.info("TaskToken: {} - APPROVED sent", taskToken);
                     } else if (REJECTED.equals(status)) {
-                        stepFunctionsService.sendTaskSuccess(taskToken, "{\"result\": \"REJECTED\"}");
+                        stepFunctionsService.sendTaskSuccess(taskToken, "{\"retryApproval\": false}");
                         log.info("TaskToken: {} - REJECTED sent", taskToken);
                     } else {
-                        // Qualquer outro status é considerado erro real
                         stepFunctionsService.sendTaskFailure(taskToken,
                             "Invalid status",
                             "Status not recognized by the system");

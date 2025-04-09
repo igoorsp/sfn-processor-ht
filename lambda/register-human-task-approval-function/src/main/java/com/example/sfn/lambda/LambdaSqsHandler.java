@@ -38,10 +38,14 @@ public class LambdaSqsHandler implements RequestHandler<SQSEvent, Void> {
     @Override
     public Void handleRequest(SQSEvent event, Context context) {
         LOGGER.info("Events: {}", event);
-        for (SQSEvent.SQSMessage msg : event.getRecords()) {
 
+        for (SQSEvent.SQSMessage msg : event.getRecords()) {
             try {
                 SqsMessage sqsMessage = parseMessage(msg.getBody());
+
+                // 🔽 NOVO: log e controle do retryCount
+                Integer retryCount = sqsMessage.getRetryCount() != null ? sqsMessage.getRetryCount() : 0;
+                LOGGER.info("RetryCount atual: {}", retryCount);
 
                 if (sqsMessage.getErrorDetail() != null) {
                     String cause = sqsMessage.getErrorDetail().getCause();
@@ -51,7 +55,14 @@ public class LambdaSqsHandler implements RequestHandler<SQSEvent, Void> {
                     LOGGER.warn("Erro de validação: {}", error != null ? error : "(sem erro)");
                 }
 
-                LOGGER.info("Processando mensagem: TaskToken={}, Status={}", sqsMessage.getTaskToken(), sqsMessage.getStatus());
+                    LOGGER.info("Processando mensagem: TaskToken={}, Status={}", sqsMessage.getTaskToken(), sqsMessage.getStatus());
+
+                // 🔽 NOVO: se quiser forçar rejeição após X tentativas
+                if (retryCount >= 3) {
+                    LOGGER.warn("TaskToken={} excedeu o limite de tentativas ({}), forçando status REJECTED.",
+                            sqsMessage.getTaskToken(), retryCount);
+                    sqsMessage.setStatus("REJECTED");
+                }
 
                 dynamoDbRepository.saveMessage(sqsMessage, dynamoDbTable);
                 LOGGER.info("Mensagem salva no DynamoDB com sucesso: TaskToken={}", sqsMessage.getTaskToken());
@@ -64,6 +75,7 @@ public class LambdaSqsHandler implements RequestHandler<SQSEvent, Void> {
                 throw e;
             }
         }
+
         return null;
     }
 

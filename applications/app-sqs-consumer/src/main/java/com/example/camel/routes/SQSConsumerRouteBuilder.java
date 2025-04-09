@@ -56,10 +56,11 @@ public class SQSConsumerRouteBuilder extends RouteBuilder {
 
         String taskToken = (String) message.get(TASK_TOKEN);
         String businessKey = (String) message.get("businessKey");
+        Integer retryCount = (Integer) message.getOrDefault("retryCount", 0);
 
         exchange.getIn().setHeader(TASK_TOKEN, taskToken);
 
-        if (!businessKey.matches("my-business-key-\\d+")) {
+        if (businessKey == null || !businessKey.matches("my-business-key-\\d+")) {
             exchange.getIn().setHeader(IS_VALID, false);
             exchange.getIn().setHeader("errorCause", "Formato inválido do businessKey");
             return;
@@ -67,6 +68,13 @@ public class SQSConsumerRouteBuilder extends RouteBuilder {
 
         String[] parts = businessKey.split("-");
         int number = Integer.parseInt(parts[parts.length - 1]);
+
+        if (number % 2 != 0 && retryCount < 1) {
+            exchange.getIn().setHeader(IS_VALID, false);
+            exchange.getIn().setHeader("errorCause", "Número ímpar e retryCount < 1, rejeitando.");
+            return;
+        }
+
         exchange.getIn().setHeader(IS_VALID, true);
         exchange.getIn().setHeader("number", number);
     }

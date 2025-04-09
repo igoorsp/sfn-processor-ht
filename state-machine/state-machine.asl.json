@@ -1,5 +1,5 @@
 {
-    "Comment": "A description of my state machine",
+    "Comment": "Workflow de Aprovação com Repetição Automática",
     "StartAt": "EnviarSolicitacaoAprovacaoAutomatica",
     "States": {
         "EnviarSolicitacaoAprovacaoAutomatica": {
@@ -16,12 +16,21 @@
             },
             "Next": "AvaliarResultadoAprovacaoAutomatica",
             "TimeoutSeconds": 120,
+            "Retry": [
+                {
+                    "ErrorEquals": [
+                        "States.Timeout"
+                    ],
+                    "IntervalSeconds": 5,
+                    "MaxAttempts": 2,
+                    "BackoffRate": 1.5
+                }
+            ],
             "Catch": [
                 {
                     "ErrorEquals": [
                         "States.Timeout"
                     ],
-                    "Comment": "Tempo excedido aguardando resposta automática",
                     "Next": "HandleTimeout"
                 },
                 {
@@ -29,7 +38,6 @@
                         "ValidationError"
                     ],
                     "ResultPath": "$.error",
-                    "Comment": "Erro de validação, redirecionando para aprovação manual",
                     "Next": "RegistrarTarefaHumanaAprovacao"
                 }
             ]
@@ -48,48 +56,60 @@
                 "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/register-human-task-approval-queue"
             },
             "Next": "DecidirReexecucao",
-            "TimeoutSeconds": 140
+            "TimeoutSeconds": 140,
+            "ResultPath": "$.humanApprovalResult"
         },
         "DecidirReexecucao": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Next": "EnviarSolicitacaoAprovacaoAutomatica",
-                    "Variable": "$.retryApproval",
-                    "BooleanEquals": true
+                    "Variable": "$.humanApprovalResult.retryApproval",
+                    "BooleanEquals": true,
+                    "Next": "EnviarSolicitacaoAprovacaoAutomatica"
                 },
                 {
-                    "Next": "EncerrarComSucesso",
-                    "Variable": "$.retryApproval",
-                    "BooleanEquals": false
+                    "Variable": "$.humanApprovalResult.retryApproval",
+                    "BooleanEquals": false,
+                    "Next": "EncerrarComSucesso"
                 }
-            ]
-        },
-        "HandleTimeout": {
-            "Type": "Fail"
+            ],
+            "Default": "EncerrarComSucesso"
         },
         "AvaliarResultadoAprovacaoAutomatica": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Next": "ProcessarAprovacao",
                     "Variable": "$.result",
-                    "StringEquals": "APPROVED"
+                    "StringEquals": "APPROVED",
+                    "Next": "ProcessarAprovacao"
                 },
                 {
-                    "Next": "ProcessarRejeicao",
                     "Variable": "$.result",
-                    "StringEquals": "REJECTED"
+                    "StringEquals": "REJECTED",
+                    "Next": "ProcessarRejeicao"
                 }
             ]
         },
         "ProcessarRejeicao": {
             "Type": "Pass",
+            "Parameters": {
+                "status": "REJECTED",
+                "originalInput.$": "$"
+            },
             "Next": "EncerrarComSucesso"
         },
         "ProcessarAprovacao": {
             "Type": "Pass",
+            "Parameters": {
+                "status": "APPROVED",
+                "originalInput.$": "$"
+            },
             "Next": "EncerrarComSucesso"
+        },
+        "HandleTimeout": {
+            "Type": "Fail",
+            "Error": "ExecutionTimeout",
+            "Cause": "Tempo limite excedido durante a aprovação automática"
         },
         "EncerrarComSucesso": {
             "Type": "Succeed"

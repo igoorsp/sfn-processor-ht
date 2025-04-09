@@ -19,4 +19,6 @@ public class SqsMessage {
     private String taskToken;
     private String status;
     private ErrorDetail errorDetail;
+    private Integer retryCount;
+
 }
