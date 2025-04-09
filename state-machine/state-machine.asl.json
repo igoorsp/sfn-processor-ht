@@ -1,16 +1,12 @@
 {
     "Comment": "A description of my state machine",
-    "StartAt": "InitFlow",
+    "StartAt": "EnviarSolicitacaoAprovacaoAutomatica",
     "States": {
-        "InitFlow": {
-            "Type": "Pass",
-            "Next": "EnviarMsgAprovacao"
-        },
-        "EnviarMsgAprovacao": {
+        "EnviarSolicitacaoAprovacaoAutomatica": {
             "Type": "Task",
             "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
             "Parameters": {
-                "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/state-machine-queue",
+                "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/send-aut-approval-queue",
                 "MessageBody": {
                     "executionId.$": "$$.Execution.Id",
                     "taskToken.$": "$$.Task.Token",
@@ -18,55 +14,84 @@
                     "businessKey.$": "$.businessKey"
                 }
             },
-            "Next": "ValidarResult",
+            "Next": "AvaliarResultadoAprovacaoAutomatica",
             "TimeoutSeconds": 120,
             "Catch": [
                 {
                     "ErrorEquals": [
                         "States.Timeout"
                     ],
-                    "Comment": "Timeout",
-                    "Next": "Timeout"
+                    "Comment": "Tempo excedido aguardando resposta automática",
+                    "Next": "HandleTimeout"
                 },
                 {
                     "ErrorEquals": [
                         "ValidationError"
                     ],
-                    "Comment": "CustomException",
-                    "Next": "CustomException"
+                    "ResultPath": "$.error",
+                    "Comment": "Erro de validação, redirecionando para aprovação manual",
+                    "Next": "RegistrarTarefaHumanaAprovacao"
                 }
             ]
         },
-        "CustomException": {
-            "Type": "Fail"
+        "RegistrarTarefaHumanaAprovacao": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+            "Parameters": {
+                "MessageBody": {
+                    "executionId.$": "$$.Execution.Id",
+                    "taskToken.$": "$$.Task.Token",
+                    "businessKey.$": "$.businessKey",
+                    "executionStartTime.$": "$$.Execution.StartTime",
+                    "error.$": "$.error"
+                },
+                "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/register-human-task-approval-queue"
+            },
+            "Next": "DecidirReexecucao",
+            "TimeoutSeconds": 140
         },
-        "Timeout": {
-            "Type": "Fail"
-        },
-        "ValidarResult": {
+        "DecidirReexecucao": {
             "Type": "Choice",
             "Choices": [
                 {
-                    "Next": "SuccessState",
+                    "Next": "EnviarSolicitacaoAprovacaoAutomatica",
+                    "Variable": "$.retryApproval",
+                    "BooleanEquals": true
+                },
+                {
+                    "Next": "EncerrarComSucesso",
+                    "Variable": "$.retryApproval",
+                    "BooleanEquals": false
+                }
+            ]
+        },
+        "HandleTimeout": {
+            "Type": "Fail"
+        },
+        "AvaliarResultadoAprovacaoAutomatica": {
+            "Type": "Choice",
+            "Choices": [
+                {
+                    "Next": "ProcessarAprovacao",
                     "Variable": "$.result",
                     "StringEquals": "APPROVED"
                 },
                 {
-                    "Next": "RejectedState",
+                    "Next": "ProcessarRejeicao",
                     "Variable": "$.result",
                     "StringEquals": "REJECTED"
                 }
             ]
         },
-        "RejectedState": {
+        "ProcessarRejeicao": {
             "Type": "Pass",
-            "Next": "Success"
+            "Next": "EncerrarComSucesso"
         },
-        "SuccessState": {
+        "ProcessarAprovacao": {
             "Type": "Pass",
-            "Next": "Success"
+            "Next": "EncerrarComSucesso"
         },
-        "Success": {
+        "EncerrarComSucesso": {
             "Type": "Succeed"
         }
     }

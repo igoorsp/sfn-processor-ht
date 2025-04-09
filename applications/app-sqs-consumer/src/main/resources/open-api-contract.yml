@@ -1,0 +1,97 @@
+  openapi: 3.0.0
+  info:
+    title: API de Gerenciamento de TaskToken
+    version: 1.0.0
+    description: API para gerenciamento de taskToken no DynamoDB e Step Functions.
+  servers:
+    - url: http://localhost:8080
+      description: Servidor de Desenvolvimento
+  paths:
+    /tasks:
+      get:
+        summary: Recupera taskTokens por status
+        parameters:
+          - name: status
+            in: query
+            required: true
+            schema:
+              type: string
+              enum: [ PENDING, APPROVED, REJECTED ]
+        responses:
+          '200':
+            description: Lista de taskTokens
+            content:
+              application/json:
+                schema:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/TaskToken'
+      put:
+        summary: Cria um novo registro de taskToken
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskToken'
+        responses:
+          '201':
+            description: Registro criado com sucesso
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    message:
+                      type: string
+    /tasks/{taskToken}:
+      post:
+        summary: Atualiza o status de uma taskToken
+        parameters:
+          - name: taskToken
+            in: path
+            required: true
+            schema:
+              type: string
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [PENDING, APPROVED, REJECTED]
+        responses:
+          '200':
+            description: Status atualizado com sucesso
+            content:
+              application/json:
+                schema:
+                  type: object
+                  properties:
+                    message:
+                      type: string
+  components:
+    schemas:
+      TaskToken:
+        type: object
+        properties:
+          businessKey:
+            type: string
+          executionStartTime:
+            type: string
+          executionId:
+            type: string
+          taskToken:
+            type: string
+          status:
+            type: string
+            enum: [PENDING, APPROVED, REJECTED]
+        required:
+          - businessKey
+          - executionStartTime
+          - executionId
+          - taskToken
+          - status

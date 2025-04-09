@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Gerenciador de TaskTokens</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .task-card:hover {
+            transform: translateY(-2px);
+            transition: transform 0.2s;
+            cursor: pointer;
+        }
+
+        .status-badge {
+            font-size: 0.8em;
+            padding: 0.35em 0.65em;
+        }
+
+        .monospace {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+    <div class="container py-5">
+        <h1 class="mb-4">📋 Gerenciador de TaskTokens</h1>
+
+        <div class="card mb-4">
+            <div class="card-body">
+                <div class="row g-3 align-items-center">
+                    <div class="col-md-4">
+                        <label for="status" class="form-label">Filtrar por Status:</label>
+                        <select id="status" class="form-select">
+                            <option value="PENDING">Pendentes</option>
+                            <option value="APPROVED">Aprovadas</option>
+                            <option value="REJECTED">Rejeitadas</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2">
+                        <button class="btn btn-primary w-100" onclick="listarTasks()">
+                            <i class="bi bi-search"></i> Buscar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="alerts" class="mb-4"></div>
+
+        <div class="row row-cols-1 row-cols-md-2 g-4" id="taskList"></div>
+
+        <!-- Modal de Resposta -->
+        <div class="modal fade" id="callbackModal" tabindex="-1">
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">📤 Enviar Resposta</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label class="form-label">Execution ID:</label>
+                            <input type="text" id="executionId" class="form-control monospace" readonly>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label">Task Token:</label>
+                            <textarea id="taskToken" class="form-control monospace" rows="2" readonly></textarea>
+                        </div>
+                        <div class="mb-3">
+                            <label for="respostaStatus" class="form-label">Novo Status:</label>
+                            <select id="respostaStatus" class="form-select">
+                                <option value="APPROVED">Aprovar ✅</option>
+                                <option value="REJECTED">Rejeitar ❌</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                        <button type="button" class="btn btn-success" onclick="enviarCallback()">Enviar
+                            Resposta</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/camel';
+        let selectedTask = null;
+
+        function showAlert(type, message, duration = 5000) {
+            const alerts = document.getElementById('alerts');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} alert-dismissible fade show`;
+            alert.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            alerts.appendChild(alert);
+
+            if (duration > 0) {
+                setTimeout(() => alert.remove(), duration);
+            }
+        }
+
+        async function listarTasks() {
+            try {
+                const status = document.getElementById('status').value;
+                const response = await fetch(`${API_BASE}/tasks?status=${status}`, {
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Origin': 'http://127.0.0.1:5500'
+                    }
+                });
+
+                if (!response.ok) {
+                    const errorText = await response.text();
+                    throw new Error(errorText);
+                }
+
+                const data = await response.json();
+
+                // Verifica se o resultado é um array
+                if (!Array.isArray(data)) {
+                    throw new Error(data.message || 'Formato inesperado da resposta');
+                }
+
+                renderTasks(data);
+
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert('danger', `❌ Erro ao carregar tasks: ${error.message}`);
+            }
+        }
+
+        function renderTasks(tasks) {
+            const container = document.getElementById('taskList');
+            container.innerHTML = '';
+
+            if (tasks.length === 0) {
+                container.innerHTML = `
+                    <div class="col">
+                        <div class="card text-center py-5">
+                            <h5 class="text-muted">Nenhuma task encontrada</h5>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            tasks.forEach(task => {
+                const card = document.createElement('div');
+                card.className = 'col';
+                card.innerHTML = `
+                    <div class="card h-100 task-card">
+                        <div class="card-body">
+                            <h5 class="card-title">${task.businessKey}</h5>
+                            <div class="d-flex justify-content-between align-items-center mb-3">
+                                <span class="badge bg-${getStatusColor(task.status)} status-badge">
+                                    ${task.status}
+                                </span>
+                                <small class="text-muted">${new Date(task.executionStartTime).toLocaleString()}</small>
+                            </div>
+                            <p class="card-text monospace text-truncate">${task.executionId}</p>
+                            ${task.status === 'PENDING' ?
+                        `<button class="btn btn-outline-primary w-100" 
+                                    onclick="selecionarTask(${JSON.stringify(task).replace(/"/g, '&quot;')})">
+                                    Gerenciar Task
+                                </button>` : ''}
+                        </div>
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+        }
+
+        function getStatusColor(status) {
+            return {
+                PENDING: 'warning',
+                APPROVED: 'success',
+                REJECTED: 'danger'
+            }[status];
+        }
+
+        function selecionarTask(task) {
+            selectedTask = task;
+            document.getElementById('executionId').value = task.executionId;
+            document.getElementById('taskToken').value = task.taskToken;
+            new bootstrap.Modal('#callbackModal').show();
+        }
+
+        async function enviarCallback() {
+            try {
+                const status = document.getElementById('respostaStatus').value;
+
+                const response = await fetch(`${API_BASE}/callback`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        status,
+                        executionId: selectedTask.executionId,
+                        taskToken: selectedTask.taskToken
+                    })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Erro desconhecido');
+                }
+
+                showAlert('success', '✅ Resposta enviada com sucesso!');
+                listarTasks();
+                bootstrap.Modal.getInstance('#callbackModal').hide();
+
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert('danger', `❌ Erro ao enviar resposta: ${error.message}`);
+            }
+        }
+
+        // Carregar tasks ao iniciar
+        document.addEventListener('DOMContentLoaded', listarTasks);
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+
+</html>
