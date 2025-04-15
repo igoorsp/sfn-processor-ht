@@ -1,7 +1,15 @@
 {
     "Comment": "Workflow de Aprovação com Repetição Automática",
-    "StartAt": "EnviarSolicitacaoAprovacaoAutomatica",
+    "StartAt": "InicializarRetryCount",
     "States": {
+        "InicializarRetryCount": {
+            "Type": "Pass",
+            "Parameters": {
+                "retryCount": 0,
+                "businessKey.$": "$.businessKey"
+            },
+            "Next": "EnviarSolicitacaoAprovacaoAutomatica"
+        },
         "EnviarSolicitacaoAprovacaoAutomatica": {
             "Type": "Task",
             "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
@@ -11,7 +19,8 @@
                     "executionId.$": "$$.Execution.Id",
                     "taskToken.$": "$$.Task.Token",
                     "executionStartTime.$": "$$.Execution.StartTime",
-                    "businessKey.$": "$.businessKey"
+                    "businessKey.$": "$.businessKey",
+                    "retryCount.$": "$.retryCount"
                 }
             },
             "Next": "AvaliarResultadoAprovacaoAutomatica",
@@ -23,7 +32,8 @@
                     ],
                     "IntervalSeconds": 5,
                     "MaxAttempts": 2,
-                    "BackoffRate": 1.5
+                    "BackoffRate": 1.5,
+                    "Comment": "Approval response not received within timeout period"
                 }
             ],
             "Catch": [
@@ -46,14 +56,15 @@
             "Type": "Task",
             "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
             "Parameters": {
+                "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/register-human-task-approval-queue",
                 "MessageBody": {
                     "executionId.$": "$$.Execution.Id",
                     "taskToken.$": "$$.Task.Token",
                     "businessKey.$": "$.businessKey",
                     "executionStartTime.$": "$$.Execution.StartTime",
+                    "retryCount.$": "$.retryCount",
                     "error.$": "$.error"
-                },
-                "QueueUrl": "https://sqs.us-east-1.amazonaws.com/835996031136/register-human-task-approval-queue"
+                }
             },
             "Next": "DecidirReexecucao",
             "TimeoutSeconds": 140,
@@ -65,15 +76,22 @@
                 {
                     "Variable": "$.humanApprovalResult.retryApproval",
                     "BooleanEquals": true,
-                    "Next": "EnviarSolicitacaoAprovacaoAutomatica"
+                    "Next": "IncrementarRetryCount"
                 },
                 {
                     "Variable": "$.humanApprovalResult.retryApproval",
                     "BooleanEquals": false,
                     "Next": "EncerrarComSucesso"
                 }
-            ],
-            "Default": "EncerrarComSucesso"
+            ]
+        },
+        "IncrementarRetryCount": {
+            "Type": "Pass",
+            "Parameters": {
+                "businessKey.$": "$.humanApprovalResult.businessKey",
+                "retryCount.$": "States.MathAdd($.retryCount, 1)"
+            },
+            "Next": "EnviarSolicitacaoAprovacaoAutomatica"
         },
         "AvaliarResultadoAprovacaoAutomatica": {
             "Type": "Choice",

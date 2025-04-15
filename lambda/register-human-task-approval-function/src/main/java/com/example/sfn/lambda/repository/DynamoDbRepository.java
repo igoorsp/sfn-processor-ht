@@ -23,7 +23,7 @@ public class DynamoDbRepository {
     private static final String BUSINESS_KEY = "businessKey";
     private static final String EXECUTION_START_TIME = "executionStartTime";
     private static final String TASK_TOKEN = "taskToken";
-    private static final String RETRY_COUNT = "retryCount"; // Novo campo
+    private static final String RETRY_COUNT = "retryCount";
 
     @Inject
     public DynamoDbRepository(DynamoDbClient dynamoDbClient) {
@@ -42,7 +42,7 @@ public class DynamoDbRepository {
         if (message.getRetryCount() != null) {
             item.put(RETRY_COUNT, AttributeValue.builder().n(String.valueOf(message.getRetryCount())).build());
         } else {
-            item.put(RETRY_COUNT, AttributeValue.builder().n("0").build()); // Se não houver, coloca 0
+            item.put(RETRY_COUNT, AttributeValue.builder().n("0").build());
         }
 
         LOGGER.info("tableName dynamodb: {}", tableName);

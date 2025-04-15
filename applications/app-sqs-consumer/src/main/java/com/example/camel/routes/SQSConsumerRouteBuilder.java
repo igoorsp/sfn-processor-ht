@@ -13,10 +13,31 @@ import java.util.Map;
 @Component
 public class SQSConsumerRouteBuilder extends RouteBuilder {
 
+    // Constants: Queue and Route Parameters
     private static final String SQS_QUEUE_NAME = "send-aut-approval-queue";
-    private static final String SQS_URI = "aws2-sqs://" + SQS_QUEUE_NAME + "?amazonSQSClient=#amazonSQSClient";
+    private static final String AMAZON_SQS_CLIENT_REF = "#amazonSQSClient";
+    private static final int MAX_MESSAGES_PER_POLL = 1;
+    private static final int WAIT_TIME_SECONDS = 20;
+    private static final int CONCURRENT_CONSUMERS = 1;
+    private static final int VISIBILITY_TIMEOUT = 30;
+    private static final boolean DELETE_AFTER_READ = false;
+
+    // Constants: Message Headers
     public static final String IS_VALID = "isValid";
     public static final String TASK_TOKEN = "taskToken";
+    private static final String BUSINESS_KEY = "businessKey";
+    private static final String RETRY_COUNT = "retryCount";
+    private static final String ERROR_CAUSE = "errorCause";
+    private static final String NUMBER = "number";
+    private static final String RESULT = "result";
+
+    // Constants: Default Values and Patterns
+    private static final int DEFAULT_RETRY_COUNT = 0;
+    private static final String BUSINESS_KEY_REGEX = "my-business-key-\\d+";
+    private static final String DEFAULT_ERROR_CAUSE = "Validation failed";
+
+    // Constructed URI
+    private static final String SQS_URI = String.format("aws2-sqs://%s?amazonSQSClient=%s", SQS_QUEUE_NAME, AMAZON_SQS_CLIENT_REF);
 
     private final StepFunctionsService stepFunctionsService;
     private final JacksonDataFormat jsonDataFormat = new JacksonDataFormat(HashMap.class);
@@ -28,11 +49,11 @@ public class SQSConsumerRouteBuilder extends RouteBuilder {
     @Override
     public void configure() {
         from(SQS_URI +
-                "&maxMessagesPerPoll=1" +
-                "&waitTimeSeconds=20" +
-                "&concurrentConsumers=1" +
-                "&visibilityTimeout=30" +
-                "&deleteAfterRead=false")
+                "&maxMessagesPerPoll=" + MAX_MESSAGES_PER_POLL +
+                "&waitTimeSeconds=" + WAIT_TIME_SECONDS +
+                "&concurrentConsumers=" + CONCURRENT_CONSUMERS +
+                "&visibilityTimeout=" + VISIBILITY_TIMEOUT +
+                "&deleteAfterRead=" + DELETE_AFTER_READ)
             .unmarshal(jsonDataFormat)
             .doTry()
                 .process(this::validateAndProcessMessage)
@@ -51,43 +72,45 @@ public class SQSConsumerRouteBuilder extends RouteBuilder {
             .end();
     }
 
-    private void validateAndProcessMessage(Exchange exchange) {
-        Map<String, Object> message = exchange.getIn().getBody(Map.class);
+    private void validateAndProcessMessage(final Exchange exchange) {
+        final Map<String, Object> message = exchange.getIn().getBody(Map.class);
 
-        String taskToken = (String) message.get(TASK_TOKEN);
-        String businessKey = (String) message.get("businessKey");
-        Integer retryCount = (Integer) message.getOrDefault("retryCount", 0);
+        final String taskToken = (String) message.get(TASK_TOKEN);
+        final String businessKey = (String) message.get(BUSINESS_KEY);
+        final Integer retryCount = (Integer) message.getOrDefault(RETRY_COUNT, DEFAULT_RETRY_COUNT);
 
         exchange.getIn().setHeader(TASK_TOKEN, taskToken);
 
-        if (businessKey == null || !businessKey.matches("my-business-key-\\d+")) {
+        if (businessKey == null || !businessKey.matches(BUSINESS_KEY_REGEX)) {
             exchange.getIn().setHeader(IS_VALID, false);
-            exchange.getIn().setHeader("errorCause", "Formato inválido do businessKey");
+            exchange.getIn().setHeader(ERROR_CAUSE, "Formato inválido do businessKey");
             return;
         }
 
         String[] parts = businessKey.split("-");
-        int number = Integer.parseInt(parts[parts.length - 1]);
+        String lastPart = parts[parts.length - 1];
+        boolean hasNumber = lastPart.matches("\\d+");
 
-        if (number % 2 != 0 && retryCount < 1) {
+        if (!hasNumber) {
             exchange.getIn().setHeader(IS_VALID, false);
-            exchange.getIn().setHeader("errorCause", "Número ímpar e retryCount < 1, rejeitando.");
+            exchange.getIn().setHeader(ERROR_CAUSE, "businessKey sem número. retryCount=" + retryCount);
             return;
         }
 
+        int number = Integer.parseInt(lastPart);
+        exchange.getIn().setHeader(NUMBER, number);
         exchange.getIn().setHeader(IS_VALID, true);
-        exchange.getIn().setHeader("number", number);
     }
 
     private void handleApproval(Exchange exchange) {
-        int number = exchange.getIn().getHeader("number", Integer.class);
+        int number = exchange.getIn().getHeader(NUMBER, Integer.class);
         String status = (number % 2 == 0) ? "APPROVED" : "REJECTED";
-        exchange.getIn().setHeader("result", status);
+        exchange.getIn().setHeader(RESULT, status);
     }
 
     private void sendSuccess(Exchange exchange) {
         String taskToken = exchange.getIn().getHeader(TASK_TOKEN, String.class);
-        String result = exchange.getIn().getHeader("result", String.class);
+        String result = exchange.getIn().getHeader(RESULT, String.class);
 
         stepFunctionsService.sendTaskSuccess(
             taskToken,
@@ -97,7 +120,7 @@ public class SQSConsumerRouteBuilder extends RouteBuilder {
 
     private void sendFailure(Exchange exchange) {
         String taskToken = exchange.getIn().getHeader(TASK_TOKEN, String.class);
-        String cause = exchange.getIn().getHeader("errorCause", "Validation failed", String.class);
+        String cause = exchange.getIn().getHeader(ERROR_CAUSE, DEFAULT_ERROR_CAUSE, String.class);
 
         stepFunctionsService.sendTaskFailure(
             taskToken,

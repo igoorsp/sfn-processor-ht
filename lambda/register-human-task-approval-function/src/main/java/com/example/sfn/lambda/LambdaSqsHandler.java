@@ -16,11 +16,15 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Optional;
+
 @ApplicationScoped
 @Named("lambdaSqsHandler")
 public class LambdaSqsHandler implements RequestHandler<SQSEvent, Void> {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(LambdaSqsHandler.class);
+    private static final int MAX_RETRY_BEFORE_REJECTION = 2;
+    private static final String SUFIX_SEPARATOR = "-";
 
     @ConfigProperty(name = "app.dynamodb.table")
     String dynamoDbTable;
@@ -36,42 +40,33 @@ public class LambdaSqsHandler implements RequestHandler<SQSEvent, Void> {
     }
 
     @Override
-    public Void handleRequest(SQSEvent event, Context context) {
-        LOGGER.info("Events: {}", event);
+    public Void handleRequest(final SQSEvent event, final Context context) {
+        LOGGER.info("Eventos recebidos: {}", event);
 
-        for (SQSEvent.SQSMessage msg : event.getRecords()) {
+        for (SQSEvent.SQSMessage message : event.getRecords()) {
             try {
-                SqsMessage sqsMessage = parseMessage(msg.getBody());
+                final SqsMessage sqsMessage = parseMessage(message.getBody());
+                logBasicInfo(sqsMessage);
 
-                // 🔽 NOVO: log e controle do retryCount
-                Integer retryCount = sqsMessage.getRetryCount() != null ? sqsMessage.getRetryCount() : 0;
-                LOGGER.info("RetryCount atual: {}", retryCount);
+                final Integer retryCount = Optional.ofNullable(sqsMessage.getRetryCount()).orElse(0);
+                final String businessKey = sqsMessage.getBusinessKey();
 
-                if (sqsMessage.getErrorDetail() != null) {
-                    String cause = sqsMessage.getErrorDetail().getCause();
-                    String error = sqsMessage.getErrorDetail().getError();
+                logErrorDetailsIfPresent(sqsMessage);
 
-                    LOGGER.warn("Mensagem com erro de validação recebida: {}", cause != null ? cause : "(sem causa)");
-                    LOGGER.warn("Erro de validação: {}", error != null ? error : "(sem erro)");
-                }
-
-                    LOGGER.info("Processando mensagem: TaskToken={}, Status={}", sqsMessage.getTaskToken(), sqsMessage.getStatus());
-
-                // 🔽 NOVO: se quiser forçar rejeição após X tentativas
-                if (retryCount >= 3) {
-                    LOGGER.warn("TaskToken={} excedeu o limite de tentativas ({}), forçando status REJECTED.",
+                if (retryCount >= MAX_RETRY_BEFORE_REJECTION && businessKey != null) {
+                    LOGGER.warn("TaskToken={} excedeu limite de tentativas ({}), aplicando sufixo.",
                             sqsMessage.getTaskToken(), retryCount);
-                    sqsMessage.setStatus("REJECTED");
+                    sqsMessage.setBusinessKey(businessKey + SUFIX_SEPARATOR + retryCount);
                 }
 
                 dynamoDbRepository.saveMessage(sqsMessage, dynamoDbTable);
-                LOGGER.info("Mensagem salva no DynamoDB com sucesso: TaskToken={}", sqsMessage.getTaskToken());
+                LOGGER.info("Mensagem persistida com sucesso: TaskToken={}", sqsMessage.getTaskToken());
 
             } catch (InvalidMessageException e) {
-                LOGGER.error("Mensagem inválida: {}", msg.getBody(), e);
+                LOGGER.error("Mensagem inválida: {}", message.getBody(), e);
                 throw new MessageProcessingException("Falha ao processar mensagem inválida", e);
             } catch (MessageProcessingException e) {
-                LOGGER.error("Erro ao processar mensagem: {}", msg.getBody(), e);
+                LOGGER.error("Erro ao processar mensagem: {}", message.getBody(), e);
                 throw e;
             }
         }
@@ -81,13 +76,31 @@ public class LambdaSqsHandler implements RequestHandler<SQSEvent, Void> {
 
     private SqsMessage parseMessage(String messageBody) {
         try {
-            SqsMessage message = objectMapper.readValue(messageBody, SqsMessage.class);
+            final SqsMessage message = objectMapper.readValue(messageBody, SqsMessage.class);
+
             if (message.getTaskToken() == null || message.getExecutionId() == null) {
                 throw new InvalidMessageException("Campos obrigatórios faltando: taskToken e executionId");
             }
+
             return message;
         } catch (JsonProcessingException e) {
             throw new InvalidMessageException("JSON inválido: " + messageBody, e);
+        }
+    }
+
+    private void logBasicInfo(SqsMessage message) {
+        LOGGER.info("Processando mensagem: TaskToken={}, Status={}", message.getTaskToken(), message.getStatus());
+        LOGGER.info("BusinessKey: {}", message.getBusinessKey());
+        LOGGER.info("RetryCount atual: {}", Optional.ofNullable(message.getRetryCount()).orElse(0));
+    }
+
+    private void logErrorDetailsIfPresent(SqsMessage message) {
+        if (message.getErrorDetail() != null) {
+            final String cause = Optional.ofNullable(message.getErrorDetail().getCause()).orElse("(sem causa)");
+            final String error = Optional.ofNullable(message.getErrorDetail().getError()).orElse("(sem erro)");
+
+            LOGGER.warn("Mensagem com erro de validação recebida: {}", cause);
+            LOGGER.warn("Erro de validação: {}", error);
         }
     }
 }

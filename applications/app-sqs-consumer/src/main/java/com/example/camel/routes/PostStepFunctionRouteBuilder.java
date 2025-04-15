@@ -1,6 +1,7 @@
 package com.example.camel.routes;
 
 import com.example.camel.service.StepFunctionsService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.camel.builder.RouteBuilder;
 import org.springframework.stereotype.Component;
 
@@ -11,11 +12,14 @@ import java.util.Map;
 public class PostStepFunctionRouteBuilder extends RouteBuilder {
 
     private final StepFunctionsService stepFunctionsService;
+    private final ObjectMapper objectMapper;
     private static final String APPROVED = "APPROVED";
     private static final String REJECTED = "REJECTED";
 
-    public PostStepFunctionRouteBuilder(StepFunctionsService stepFunctionsService) {
+    public PostStepFunctionRouteBuilder(final StepFunctionsService stepFunctionsService,
+                                        final ObjectMapper objectMapper) {
         this.stepFunctionsService = stepFunctionsService;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -30,6 +34,7 @@ public class PostStepFunctionRouteBuilder extends RouteBuilder {
                     final String status = (String) body.get("status");
                     final String taskToken = (String) body.get("taskToken");
                     final String executionId = (String) body.get("executionId");
+                    final String businessKey = (String) body.get("businessKey");
 
                     if (status == null || status.trim().isEmpty()) {
                         throw new IllegalArgumentException("Status is missing or empty in the message body");
@@ -42,7 +47,10 @@ public class PostStepFunctionRouteBuilder extends RouteBuilder {
                     }
 
                     if (APPROVED.equals(status)) {
-                        stepFunctionsService.sendTaskSuccess(taskToken, "{\"retryApproval\": true}");
+                        stepFunctionsService.sendTaskSuccess(taskToken, objectMapper.writeValueAsString(
+                                Map.of("retryApproval", true,
+                                        "businessKey", businessKey))
+                        );
                         log.info("TaskToken: {} - APPROVED sent", taskToken);
                     } else if (REJECTED.equals(status)) {
                         stepFunctionsService.sendTaskSuccess(taskToken, "{\"retryApproval\": false}");
